@@ -1,4 +1,14 @@
+# فایل‌های سیستمی و غیرضروری
+.DS_Store
+*.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.zip
 android/
 packages/v2ray_dan/android/
 screenshots/
-*.zip
