@@ -12,12 +12,6 @@ Uses a custom native plugin to run the official V2Ray core directly.
 ![Screenshot 2](screenshots/android/screenshot-2.png)
 ![Screenshot 3](screenshots/android/screenshot-3.png)
 
-### macOS
-
-![Screenshot 1](screenshots/macos/screenshot-1.png)
-![Screenshot 2](screenshots/macos/screenshot-2.png)
-![Screenshot 3](screenshots/macos/screenshot-3.png)
-
 
 ## Features
 
