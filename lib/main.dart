@@ -1,7 +1,5 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:window_manager/window_manager.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'services/v2ray_service.dart';
@@ -20,25 +18,6 @@ void main() {
       // Initialize Services
       _globalV2RayService = V2RayService();
       _logger = LoggerService();
-
-      // Desktop Window Configuration
-      if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
-        await windowManager.ensureInitialized();
-        
-        WindowOptions windowOptions = const WindowOptions(
-          size: Size(500, 700),
-          minimumSize: Size(400, 500),
-          center: true,
-          backgroundColor: Colors.transparent,
-          skipTaskbar: false,
-          titleBarStyle: TitleBarStyle.normal,
-        );
-        
-        windowManager.waitUntilReadyToShow(windowOptions, () async {
-          await windowManager.show();
-          await windowManager.focus();
-        });
-      }
 
       // Setup error handling
       FlutterError.onError = (FlutterErrorDetails details) {
