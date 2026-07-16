@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:v2ray/main.dart';
+import 'package:flaming_cherubim/main.dart';
 
 void main() {
   testWidgets('App initialization smoke test', (WidgetTester tester) async {
