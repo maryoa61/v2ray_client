@@ -41,14 +41,40 @@ class V2RayService {
       onStatusChanged: (status) {
         final newStatus = _mapPluginStatus(status.state);
         if (_status != newStatus) {
-          _status = newStatus;
           _logger.info('Native Status Broadcast: ${status.state} -> $newStatus');
-          _statusController.add(_status);
+          _safeEmit(newStatus);
         }
       },
     );
     _logger.info('V2RayService Singleton initialized');
     _setupAndroidLogReceiver();
+  }
+
+  // ---------------------------------------------------------------------
+  // Safe status emission.
+  //
+  // This service is a singleton and is expected to live for the entire
+  // app lifetime. dispose() should ONLY ever be called once, at true app
+  // shutdown (e.g. from main()'s top-level teardown, or never at all in
+  // a long-running app) — NEVER from a page/widget's State.dispose().
+  // Tying a singleton's lifetime to a single screen is what causes the
+  // "already-closed stream" crash: some in-flight async call (native
+  // MethodChannel init, a delayed Future, a timer callback) finishes
+  // after the screen — and therefore the service — has been disposed,
+  // and then tries to emit a status.
+  //
+  // _safeEmit() is the defensive layer: it makes every emission a no-op
+  // once the controller is closed, instead of throwing. It also updates
+  // _status even if the controller is closed, so status reads via the
+  // `status` getter stay correct.
+  // ---------------------------------------------------------------------
+  void _safeEmit(VPNConnectionStatus status) {
+    _status = status;
+    if (!_statusController.isClosed) {
+      _statusController.add(status);
+    } else {
+      _logger.warning('Attempted to emit status "$status" after V2RayService was disposed (ignored).');
+    }
   }
 
   // Setup receiver for Android/Kotlin logs
@@ -150,9 +176,8 @@ class V2RayService {
       _logger.info('========== V2Ray initialization complete ==========');
     } catch (e, stackTrace) {
       _lastError = 'Failed to initialize V2Ray: $e';
-      _status = VPNConnectionStatus.error;
       _logger.error(_lastError!, stackTrace: stackTrace);
-      _statusController.add(_status);
+      _safeEmit(VPNConnectionStatus.error);
       rethrow; // Re-throw so the app knows initialization failed
     }
   }
@@ -189,14 +214,9 @@ class V2RayService {
     }
 
     // Clear internal state
-    _status = VPNConnectionStatus.disconnected;
     _currentServer = null;
     _lastError = null;
-    _statusController.add(_status);
-
-    // Clear storage data (optional but recommended for full reset, but user asked for "reset vpn for device")
-    // Let's just reset the VPN state for now, as clearing all data might be too aggressive unless explicitly asked.
-    // However, the prompt says "reset vpn for device and also relaunch the app".
+    _safeEmit(VPNConnectionStatus.disconnected);
 
     _logger.warning('========== SYSTEM RESET COMPLETE ==========');
 
@@ -229,7 +249,6 @@ class V2RayService {
       return false;
     }
 
-
     try {
       // Use a slightly longer timeout to prevent premature "stuck" declarations
       return await _runConnectLogic(server, customDns, proxyOnly, useSystemDns).timeout(
@@ -250,10 +269,9 @@ class V2RayService {
   }
 
   Future<void> _cleanupAfterError(String errorMsg) async {
-    _status = VPNConnectionStatus.error;
     _lastError = errorMsg;
     _currentServer = null;
-    _statusController.add(_status);
+    _safeEmit(VPNConnectionStatus.error);
 
     // Try to cleanup any partial connection
     try {
@@ -270,7 +288,7 @@ class V2RayService {
       throw Exception('Connection already in progress, please wait');
     }
     _isConnectInProgress = true;
-    
+
     try {
       return await _runConnectLogicInternal(server, customDns, proxyOnly, useSystemDns);
     } finally {
@@ -293,10 +311,9 @@ class V2RayService {
 
     // Step 2: Update status to connecting
     _logger.info('Step 1/7: Updating status to CONNECTING');
-    _status = VPNConnectionStatus.connecting;
-    _statusController.add(_status);
     _currentServer = server;
     _lastError = null;
+    _safeEmit(VPNConnectionStatus.connecting);
 
     // Step 3: Check VPN permission for VPN mode
     if (!proxyOnly) {
@@ -449,15 +466,15 @@ class V2RayService {
       if (customDns != null && customDns.isNotEmpty) {
         effectiveDns.addAll(customDns.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty));
         _logger.info('Using Custom DNS: $effectiveDns');
-      } 
-      
+      }
+
       // If no custom DNS, or if we want to append system DNS as fallback (optional strategy)
       // For privacy/leak protection, usually we prefer Custom DNS ONLY if specified.
       if (effectiveDns.isEmpty) {
         if (systemDnsServers.isNotEmpty) {
-           effectiveDns.addAll(systemDnsServers);
+          effectiveDns.addAll(systemDnsServers);
         } else {
-           effectiveDns.addAll(["8.8.8.8", "1.1.1.1"]);
+          effectiveDns.addAll(["8.8.8.8", "1.1.1.1"]);
         }
         _logger.info('Using System/Default DNS: $effectiveDns');
       }
@@ -573,8 +590,7 @@ class V2RayService {
     // Update status to connected
     if (_status != VPNConnectionStatus.connected) {
       _logger.info('Updating status to CONNECTED');
-      _status = VPNConnectionStatus.connected;
-      _statusController.add(_status);
+      _safeEmit(VPNConnectionStatus.connected);
     }
 
     _logger.info('========== Connection successful ==========');
@@ -609,8 +625,7 @@ class V2RayService {
     _logger.info('Disconnecting from: ${_currentServer?.name ?? "VPN"}');
 
     try {
-      _status = VPNConnectionStatus.disconnecting;
-      _statusController.add(_status);
+      _safeEmit(VPNConnectionStatus.disconnecting);
 
       // Stop log polling
       _stopLogPolling();
@@ -642,19 +657,17 @@ class V2RayService {
       // Increased delay to allow network stack to fully reset
       await Future.delayed(const Duration(milliseconds: 800));
 
-      _status = VPNConnectionStatus.disconnected;
-      _statusController.add(_status);
       _currentServer = null;
       _lastError = null;
+      _safeEmit(VPNConnectionStatus.disconnected);
 
       _logger.info('========== Disconnection complete ==========');
     } catch (e, stackTrace) {
       _logger.error('========== Disconnection failed ==========');
       _logger.error('Error: $e', stackTrace: stackTrace);
 
-      _status = VPNConnectionStatus.error;
       _lastError = 'Disconnect error: $e';
-      _statusController.add(_status);
+      _safeEmit(VPNConnectionStatus.error);
 
       // Force cleanup state anyway
       _currentServer = null;
@@ -689,13 +702,13 @@ class V2RayService {
 
     try {
       _logger.info('Enabling macOS system proxy (${mode.displayName} mode)...');
-      
+
       // Call native method with proxy mode argument
       const platform = MethodChannel('v2ray_dan');
       final result = await platform.invokeMethod('setSystemProxy', {
         'proxyMode': mode.name,
       });
-      
+
       if (result == true) {
         _logger.info('✓ System proxy enabled successfully');
       } else {
@@ -830,9 +843,22 @@ class V2RayService {
     _logPollingTimer = null;
   }
 
-  // Dispose resources
+  // Dispose resources.
+  //
+  // WARNING: This service is a singleton. Do NOT call dispose() from a
+  // page/widget's State.dispose() — that ties the singleton's lifetime
+  // to one screen and will cause "Bad state: Cannot add new events after
+  // calling close()" the next time the service is reused (e.g. in a
+  // second widget test, or if the user navigates back to a screen that
+  // re-touches the service). Only call this at true app shutdown, if at
+  // all. Safe to call more than once — subsequent calls are no-ops.
+  bool _isDisposed = false;
   void dispose() {
+    if (_isDisposed) return;
+    _isDisposed = true;
     _stopLogPolling();
-    _statusController.close();
+    if (!_statusController.isClosed) {
+      _statusController.close();
+    }
   }
 }
