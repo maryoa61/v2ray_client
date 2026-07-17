@@ -65,10 +65,17 @@ class _V2RayAppState extends State<V2RayApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    // Disconnect VPN when app is destroyed
+    // Disconnect VPN when app is destroyed.
+    // disconnect() is async and resumes (after its internal await) with
+    // another _statusController.add(...) call — so we must wait for it
+    // to fully finish before calling dispose(), which closes that
+    // controller. Calling dispose() right away (without waiting) closes
+    // the stream while disconnect() is still mid-flight, causing
+    // "Bad state: Cannot add new events after calling close".
     _logger.info('App disposing - disconnecting VPN');
-    _globalV2RayService.disconnect();
-    _globalV2RayService.dispose();
+    _globalV2RayService.disconnect().whenComplete(() {
+      _globalV2RayService.dispose();
+    });
     super.dispose();
   }
 
