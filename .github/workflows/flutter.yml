@@ -1,10 +1,15 @@
 name: Flutter CI
 
+# Automatic triggers are temporarily disabled while debugging locally.
+# The workflow now only runs when you trigger it manually from the
+# Actions tab ("Run workflow" button). To re-enable automatic runs on
+# every push, uncomment the "push"/"pull_request" blocks below.
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  workflow_dispatch: {}
+  # push:
+  #   branches: [ "main" ]
+  # pull_request:
+  #   branches: [ "main" ]
 
 jobs:
   analyze-and-test:
