@@ -6,18 +6,14 @@ import 'services/v2ray_service.dart';
 import 'services/logger_service.dart';
 
 // Global V2Ray service instance for cleanup on crash
-late V2RayService _globalV2RayService;
-late LoggerService _logger;
+final V2RayService _globalV2RayService = V2RayService();
+final LoggerService _logger = LoggerService();
 
 void main() {
   // Catch async errors
   runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
-
-      // Initialize Services
-      _globalV2RayService = V2RayService();
-      _logger = LoggerService();
 
       // Setup error handling
       FlutterError.onError = (FlutterErrorDetails details) {
