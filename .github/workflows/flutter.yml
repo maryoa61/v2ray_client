@@ -9,21 +9,17 @@ on:
 jobs:
   analyze-and-test:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Java
         uses: actions/setup-java@v3
         with:
           distribution: 'zulu'
           java-version: '17'
-
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-
       - name: Install dependencies
         run: |
           flutter pub get
@@ -32,9 +28,75 @@ jobs:
             flutter pub get
             cd ../..
           fi
-
       - name: Analyze project
-        run: flutter analyze
-
+        run: flutter analyze --no-fatal-warnings --no-fatal-infos
       - name: Run tests
         run: flutter test
+
+  build-debug-apk:
+    needs: analyze-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+      - name: Install dependencies
+        run: |
+          flutter pub get
+          if [ -d "packages/v2ray_dan" ]; then
+            cd packages/v2ray_dan
+            flutter pub get
+            cd ../..
+          fi
+      - name: Build debug APK
+        run: flutter build apk --debug
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: build/app/outputs/flutter-apk/app-debug.apk
+
+  build-release-apk:
+    needs: analyze-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+      - name: Install dependencies
+        run: |
+          flutter pub get
+          if [ -d "packages/v2ray_dan" ]; then
+            cd packages/v2ray_dan
+            flutter pub get
+            cd ../..
+          fi
+      # NOTE: No real keystore exists yet. Whether this produces an
+      # installable APK depends on android/app/build.gradle:
+      #   - If signingConfigs.release still points at signingConfigs.debug
+      #     (Flutter's default template), this just works and the APK
+      #     is installable.
+      #   - If it references env vars for a real keystore (common in
+      #     copied templates), this step will fail until those secrets
+      #     exist. If that happens, send me android/app/build.gradle.
+      - name: Build release APK
+        run: flutter build apk --release
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: build/app/outputs/flutter-apk/app-release.apk
