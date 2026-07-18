@@ -599,7 +599,7 @@ class _PingSettingsScreenState extends State<PingSettingsScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Flaming Cherubim', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+                          const Text('CFVPN', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
                           GestureDetector(
                             onTap: () => _launchURL('https://www.danials.org/'),
                             child: Text(
@@ -621,8 +621,6 @@ class _PingSettingsScreenState extends State<PingSettingsScreen> {
               const SizedBox(height: 24),
               const Divider(color: Colors.white10),
               const SizedBox(height: 16),
-              _buildAboutItem(label: 'DEVELOPER', value: 'Danial', icon: Icons.person_outline),
-              const SizedBox(height: 12),
               _buildAboutItem(
                 label: 'VERSION',
                 value: 'v${_packageInfo.version}',
@@ -630,14 +628,6 @@ class _PingSettingsScreenState extends State<PingSettingsScreen> {
                 onTap: () {
                   Navigator.push(context, MaterialPageRoute(builder: (context) => const ChangelogPage()));
                 },
-              ),
-              const SizedBox(height: 12),
-              _buildAboutItem(
-                label: 'WEBSITE',
-                value: 'https://danials.org',
-                icon: Icons.language,
-                isLink: true,
-                onTap: () => _launchURL('https://www.danials.org/'),
               ),
             ],
           ),
