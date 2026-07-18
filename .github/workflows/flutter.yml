@@ -1,15 +1,11 @@
 name: Flutter CI
 
-# Automatic triggers are temporarily disabled while debugging locally.
-# The workflow now only runs when you trigger it manually from the
-# Actions tab ("Run workflow" button). To re-enable automatic runs on
-# every push, uncomment the "push"/"pull_request" blocks below.
 on:
   workflow_dispatch: {}
-  # push:
-  #   branches: [ "main" ]
-  # pull_request:
-  #   branches: [ "main" ]
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   analyze-and-test:
@@ -33,6 +29,32 @@ jobs:
             flutter pub get
             cd ../..
           fi
+      - name: Download native libraries
+        run: |
+          BASE="https://github.com/maryoa61/v2ray_client/releases/download"
+          JNI_DIR="packages/v2ray_dan/android/src/main/jniLibs"
+          LIBS_DIR="packages/v2ray_dan/android/libs"
+
+          mkdir -p "$JNI_DIR/arm64-v8a" "$JNI_DIR/armeabi-v7a" "$JNI_DIR/x86" "$JNI_DIR/x86_64" "$LIBS_DIR"
+
+          # arm64-v8a
+          curl -fL "$BASE/native-libs-v1/libv2jni-arm64-v8a.so" -o "$JNI_DIR/arm64-v8a/libv2jni.so"
+          curl -fL "$BASE/native-libs-v1/libtun2socks-arm64-v8a.so" -o "$JNI_DIR/arm64-v8a/libtun2socks.so"
+
+          # armeabi-v7a
+          curl -fL "$BASE/native-libs-v2/libv2jni-armeabi-v7a.so" -o "$JNI_DIR/armeabi-v7a/libv2jni.so"
+          curl -fL "$BASE/native-libs-v2/libtun2socks-armeabi-v7a.so" -o "$JNI_DIR/armeabi-v7a/libtun2socks.so"
+
+          # x86
+          curl -fL "$BASE/native-libs-v3/libv2jni-x86.so" -o "$JNI_DIR/x86/libv2jni.so"
+          curl -fL "$BASE/native-libs-v3/libtun2socks-x86.so" -o "$JNI_DIR/x86/libtun2socks.so"
+
+          # x86_64
+          curl -fL "$BASE/native-libs-v4/libv2jni-x86_64.so" -o "$JNI_DIR/x86_64/libv2jni.so"
+          curl -fL "$BASE/native-libs-v4/libtun2socks-x86_64.so" -o "$JNI_DIR/x86_64/libtun2socks.so"
+
+          # jar
+          curl -fL "$BASE/libv2ray-classes.jar/libv2ray-classes.jar" -o "$LIBS_DIR/libv2ray-classes.jar"
       - name: Analyze project
         run: flutter analyze --no-fatal-warnings --no-fatal-infos
       - name: Run tests
@@ -60,6 +82,32 @@ jobs:
             flutter pub get
             cd ../..
           fi
+      - name: Download native libraries
+        run: |
+          BASE="https://github.com/maryoa61/v2ray_client/releases/download"
+          JNI_DIR="packages/v2ray_dan/android/src/main/jniLibs"
+          LIBS_DIR="packages/v2ray_dan/android/libs"
+
+          mkdir -p "$JNI_DIR/arm64-v8a" "$JNI_DIR/armeabi-v7a" "$JNI_DIR/x86" "$JNI_DIR/x86_64" "$LIBS_DIR"
+
+          # arm64-v8a
+          curl -fL "$BASE/native-libs-v1/libv2jni-arm64-v8a.so" -o "$JNI_DIR/arm64-v8a/libv2jni.so"
+          curl -fL "$BASE/native-libs-v1/libtun2socks-arm64-v8a.so" -o "$JNI_DIR/arm64-v8a/libtun2socks.so"
+
+          # armeabi-v7a
+          curl -fL "$BASE/native-libs-v2/libv2jni-armeabi-v7a.so" -o "$JNI_DIR/armeabi-v7a/libv2jni.so"
+          curl -fL "$BASE/native-libs-v2/libtun2socks-armeabi-v7a.so" -o "$JNI_DIR/armeabi-v7a/libtun2socks.so"
+
+          # x86
+          curl -fL "$BASE/native-libs-v3/libv2jni-x86.so" -o "$JNI_DIR/x86/libv2jni.so"
+          curl -fL "$BASE/native-libs-v3/libtun2socks-x86.so" -o "$JNI_DIR/x86/libtun2socks.so"
+
+          # x86_64
+          curl -fL "$BASE/native-libs-v4/libv2jni-x86_64.so" -o "$JNI_DIR/x86_64/libv2jni.so"
+          curl -fL "$BASE/native-libs-v4/libtun2socks-x86_64.so" -o "$JNI_DIR/x86_64/libtun2socks.so"
+
+          # jar
+          curl -fL "$BASE/libv2ray-classes.jar/libv2ray-classes.jar" -o "$LIBS_DIR/libv2ray-classes.jar"
       - name: Build debug APK
         run: flutter build apk --debug
       - name: Upload debug APK
@@ -90,6 +138,32 @@ jobs:
             flutter pub get
             cd ../..
           fi
+      - name: Download native libraries
+        run: |
+          BASE="https://github.com/maryoa61/v2ray_client/releases/download"
+          JNI_DIR="packages/v2ray_dan/android/src/main/jniLibs"
+          LIBS_DIR="packages/v2ray_dan/android/libs"
+
+          mkdir -p "$JNI_DIR/arm64-v8a" "$JNI_DIR/armeabi-v7a" "$JNI_DIR/x86" "$JNI_DIR/x86_64" "$LIBS_DIR"
+
+          # arm64-v8a
+          curl -fL "$BASE/native-libs-v1/libv2jni-arm64-v8a.so" -o "$JNI_DIR/arm64-v8a/libv2jni.so"
+          curl -fL "$BASE/native-libs-v1/libtun2socks-arm64-v8a.so" -o "$JNI_DIR/arm64-v8a/libtun2socks.so"
+
+          # armeabi-v7a
+          curl -fL "$BASE/native-libs-v2/libv2jni-armeabi-v7a.so" -o "$JNI_DIR/armeabi-v7a/libv2jni.so"
+          curl -fL "$BASE/native-libs-v2/libtun2socks-armeabi-v7a.so" -o "$JNI_DIR/armeabi-v7a/libtun2socks.so"
+
+          # x86
+          curl -fL "$BASE/native-libs-v3/libv2jni-x86.so" -o "$JNI_DIR/x86/libv2jni.so"
+          curl -fL "$BASE/native-libs-v3/libtun2socks-x86.so" -o "$JNI_DIR/x86/libtun2socks.so"
+
+          # x86_64
+          curl -fL "$BASE/native-libs-v4/libv2jni-x86_64.so" -o "$JNI_DIR/x86_64/libv2jni.so"
+          curl -fL "$BASE/native-libs-v4/libtun2socks-x86_64.so" -o "$JNI_DIR/x86_64/libtun2socks.so"
+
+          # jar
+          curl -fL "$BASE/libv2ray-classes.jar/libv2ray-classes.jar" -o "$LIBS_DIR/libv2ray-classes.jar"
       # NOTE: No real keystore exists yet. Whether this produces an
       # installable APK depends on android/app/build.gradle:
       #   - If signingConfigs.release still points at signingConfigs.debug
