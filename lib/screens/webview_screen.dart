@@ -25,12 +25,23 @@ class _WebViewScreenState extends State<WebViewScreen> {
   String _currentUrl = '';
   List<String> _history = [];
 
+  // Fragment (TLS packet fragmentation) settings — each is a min-max range.
+  // Persisted via StorageService (SharedPreferences) on SAVE.
+  final TextEditingController _lengthMinCtrl = TextEditingController(text: '50');
+  final TextEditingController _lengthMaxCtrl = TextEditingController(text: '100');
+  final TextEditingController _intervalMinCtrl = TextEditingController(text: '10');
+  final TextEditingController _intervalMaxCtrl = TextEditingController(text: '20');
+  final TextEditingController _packetsMinCtrl = TextEditingController(text: '1');
+  final TextEditingController _packetsMaxCtrl = TextEditingController(text: '3');
+  bool _fragmentEnabled = false;
+
   @override
   void initState() {
     super.initState();
     _currentUrl = widget.initialUrl;
     _urlController.text = _currentUrl;
     _loadHistory();
+    _loadFragmentSettings();
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted);
@@ -107,6 +118,34 @@ class _WebViewScreenState extends State<WebViewScreen> {
     });
   }
 
+  Future<void> _loadFragmentSettings() async {
+    final storage = await StorageService.init();
+    final f = storage.loadFragmentSettings();
+    if (!mounted) return;
+    setState(() {
+      _fragmentEnabled = f['enabled'] as bool;
+      _lengthMinCtrl.text = '${f['lengthMin']}';
+      _lengthMaxCtrl.text = '${f['lengthMax']}';
+      _intervalMinCtrl.text = '${f['intervalMin']}';
+      _intervalMaxCtrl.text = '${f['intervalMax']}';
+      _packetsMinCtrl.text = '${f['packetsMin']}';
+      _packetsMaxCtrl.text = '${f['packetsMax']}';
+    });
+  }
+
+  Future<void> _saveFragmentSettings() async {
+    final storage = await StorageService.init();
+    await storage.saveFragmentSettings(
+      enabled: _fragmentEnabled,
+      lengthMin: int.tryParse(_lengthMinCtrl.text) ?? 50,
+      lengthMax: int.tryParse(_lengthMaxCtrl.text) ?? 100,
+      intervalMin: int.tryParse(_intervalMinCtrl.text) ?? 10,
+      intervalMax: int.tryParse(_intervalMaxCtrl.text) ?? 20,
+      packetsMin: int.tryParse(_packetsMinCtrl.text) ?? 1,
+      packetsMax: int.tryParse(_packetsMaxCtrl.text) ?? 3,
+    );
+  }
+
   Future<void> _addToHistory(String url) async {
     if (url.isEmpty || url == 'about:blank') return;
 
@@ -121,6 +160,179 @@ class _WebViewScreenState extends State<WebViewScreen> {
 
     final storage = await StorageService.init();
     await storage.saveUrlHistory(_history);
+  }
+
+  void _showFragmentSettings() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: StatefulBuilder(
+          builder: (context, setSheetState) => Container(
+            decoration: const BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              border: Border(
+                top: BorderSide(color: AppTheme.accentColor, width: 1),
+              ),
+            ),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Row(
+                  children: [
+                    const Icon(Icons.call_split, size: 16, color: AppTheme.accentColor),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'PACKET FRAGMENT',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, letterSpacing: 2, color: Colors.white),
+                    ),
+                    const Spacer(),
+                    Switch(
+                      value: _fragmentEnabled,
+                      onChanged: (v) {
+                        setSheetState(() => _fragmentEnabled = v);
+                        setState(() => _fragmentEnabled = v);
+                      },
+                      activeThumbColor: AppTheme.accentColor,
+                      activeTrackColor: AppTheme.accentColor.withValues(alpha: 0.2),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Splits TLS handshake packets to evade DPI. Advanced — leave defaults if unsure.',
+                  style: TextStyle(fontSize: 10, color: Colors.white.withValues(alpha: 0.4), height: 1.4),
+                ),
+                const SizedBox(height: 20),
+                _buildFragmentRangeRow('LENGTH', 'bytes', _lengthMinCtrl, _lengthMaxCtrl),
+                const SizedBox(height: 14),
+                _buildFragmentRangeRow('INTERVAL', 'ms', _intervalMinCtrl, _intervalMaxCtrl),
+                const SizedBox(height: 14),
+                _buildFragmentRangeRow('PACKETS', 'count', _packetsMinCtrl, _packetsMaxCtrl),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.successColor,
+                      foregroundColor: Colors.black,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        side: BorderSide(color: AppTheme.successColor.withValues(alpha: 0.5)),
+                      ),
+                    ),
+                    onPressed: () async {
+                      await _saveFragmentSettings();
+                      if (!context.mounted) return;
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: const Row(
+                            children: [
+                              Icon(Icons.check_circle_outline, size: 16, color: Colors.black),
+                              SizedBox(width: 8),
+                              Text('Fragment settings saved'),
+                            ],
+                          ),
+                          backgroundColor: AppTheme.successColor,
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    },
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.save_outlined, size: 16),
+                        SizedBox(width: 8),
+                        Text(
+                          'SAVE',
+                          style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.5, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFragmentRangeRow(
+    String label,
+    String unit,
+    TextEditingController minCtrl,
+    TextEditingController maxCtrl,
+  ) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 78,
+          child: Text(
+            label,
+            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1, color: Colors.white.withValues(alpha: 0.6)),
+          ),
+        ),
+        Expanded(child: _buildRangeField(minCtrl, 'min')),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Text('–', style: TextStyle(color: Colors.white.withValues(alpha: 0.3), fontSize: 14)),
+        ),
+        Expanded(child: _buildRangeField(maxCtrl, 'max')),
+        SizedBox(
+          width: 40,
+          child: Text(
+            unit,
+            textAlign: TextAlign.right,
+            style: TextStyle(fontSize: 9, color: Colors.white.withValues(alpha: 0.3)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRangeField(TextEditingController controller, String hint) {
+    return Container(
+      height: 36,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      alignment: Alignment.center,
+      child: TextField(
+        controller: controller,
+        textAlign: TextAlign.center,
+        keyboardType: TextInputType.number,
+        style: const TextStyle(color: Colors.white, fontSize: 13, fontFamily: 'monospace'),
+        decoration: InputDecoration(
+          isDense: true,
+          border: InputBorder.none,
+          hintText: hint,
+          hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.2), fontSize: 11),
+        ),
+      ),
+    );
   }
 
   Future<void> _launchExternal(String url) async {
@@ -260,6 +472,11 @@ class _WebViewScreenState extends State<WebViewScreen> {
                   },
                 ),
                 IconButton(
+                  icon: Icon(Icons.call_split, size: 18, color: _fragmentEnabled ? AppTheme.accentColor : null),
+                  tooltip: 'Packet Fragment',
+                  onPressed: _showFragmentSettings,
+                ),
+                IconButton(
                   icon: const Icon(Icons.code, size: 18),
                   tooltip: 'GitHub',
                   onPressed: () => _launchExternal('https://github.com/maryoa61'),
@@ -299,5 +516,17 @@ class _WebViewScreenState extends State<WebViewScreen> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _urlController.dispose();
+    _lengthMinCtrl.dispose();
+    _lengthMaxCtrl.dispose();
+    _intervalMinCtrl.dispose();
+    _intervalMaxCtrl.dispose();
+    _packetsMinCtrl.dispose();
+    _packetsMaxCtrl.dispose();
+    super.dispose();
   }
 }
