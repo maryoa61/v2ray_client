@@ -21,6 +21,7 @@ class StorageService {
   static const String _urlHistoryKey = 'url_history';
   static const String _proxyModeKey = 'proxy_mode';
   static const String _fragmentSettingsKey = 'fragment_settings';
+  static const String _autoReconnectSettingsKey = 'auto_reconnect_settings';
 
   final SharedPreferences _prefs;
 
@@ -234,6 +235,33 @@ class StorageService {
         'intervalMax': 20,
         'packetsMin': 1,
         'packetsMax': 3,
+      };
+    }
+    return json.decode(jsonString) as Map<String, dynamic>;
+  }
+
+  // Auto-reconnect settings.
+  // Stored as a flat JSON map, same pattern as fragment settings above —
+  // `enabled` lets the user turn the whole feature off (e.g. if they'd
+  // rather manually redial), `maxAttempts` caps how many times the
+  // exponential-backoff loop in V2RayService will retry before giving up.
+  Future<void> saveAutoReconnectSettings({
+    required bool enabled,
+    required int maxAttempts,
+  }) async {
+    final map = {
+      'enabled': enabled,
+      'maxAttempts': maxAttempts,
+    };
+    await _prefs.setString(_autoReconnectSettingsKey, json.encode(map));
+  }
+
+  Map<String, dynamic> loadAutoReconnectSettings() {
+    final jsonString = _prefs.getString(_autoReconnectSettingsKey);
+    if (jsonString == null) {
+      return {
+        'enabled': true,
+        'maxAttempts': 6,
       };
     }
     return json.decode(jsonString) as Map<String, dynamic>;
