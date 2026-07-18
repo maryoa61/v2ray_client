@@ -423,7 +423,8 @@ class V2RayService {
         outboundsList.add({'tag': 'dns-out', 'protocol': 'dns', 'settings': {}});
       }
 
-      // DNS Configuration - Fetch system DNS dynamically
+      // DNS Configuration - Fetch system DNS dynamically (kept for logging /
+      // diagnostics only; no longer used as the default resolver — see below).
       _logger.info('Step 4/7: Fetching system DNS...');
       List<String> systemDnsServers = [];
       try {
@@ -461,22 +462,30 @@ class V2RayService {
         }
       }
 
-      // Prioritize Custom DNS if available
+      // Prioritize Custom DNS if available.
+      //
+      // NOTE (fix): Previously this fell back to the carrier/system DNS
+      // (systemDnsServers), and the routing rules explicitly sent DNS
+      // queries out "direct" (bypassing the tunnel) to avoid a resolution
+      // deadlock. That combination meant every domain lookup was visible
+      // to — and could be tampered with / blocked by — the ISP, even
+      // though the tunnel itself was fast and healthy. This is exactly
+      // why "ping was great but most sites wouldn't load".
+      //
+      // Standard practice (what v2rayNG / Hiddify do by default): use
+      // remote, censorship-resistant DNS resolvers (Cloudflare / Google)
+      // and route those DNS queries THROUGH the tunnel, not around it.
+      // Since 1.1.1.1 / 8.8.8.8 are static IPs (not domains), routing
+      // them through "proxy" introduces no circular-resolution deadlock.
       final List<String> effectiveDns = [];
       if (customDns != null && customDns.isNotEmpty) {
         effectiveDns.addAll(customDns.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty));
         _logger.info('Using Custom DNS: $effectiveDns');
       }
 
-      // If no custom DNS, or if we want to append system DNS as fallback (optional strategy)
-      // For privacy/leak protection, usually we prefer Custom DNS ONLY if specified.
       if (effectiveDns.isEmpty) {
-        if (systemDnsServers.isNotEmpty) {
-          effectiveDns.addAll(systemDnsServers);
-        } else {
-          effectiveDns.addAll(["8.8.8.8", "1.1.1.1"]);
-        }
-        _logger.info('Using System/Default DNS: $effectiveDns');
+        effectiveDns.addAll(["1.1.1.1", "8.8.8.8"]);
+        _logger.info('Using Default Secure DNS (routed through tunnel): $effectiveDns');
       }
 
       fullConfig['dns'] = {
@@ -484,11 +493,11 @@ class V2RayService {
         "queryStrategy": "UseIP",
       };
 
-      // Routing Strategy - Robust rules
+      // Routing Strategy - Robust rules (matches v2rayNG / Hiddify default behavior)
       fullConfig['routing'] = {
         "domainStrategy": "IPIfNonMatch",
         "rules": [
-          // Rule 1: Hijack all DNS traffic to dns-out (CRITICAL)
+          // Rule 1: Hijack all DNS traffic (port 53) to the dns-out handler (CRITICAL)
           {"type": "field", "port": 53, "outboundTag": "dns-out"},
           // Rule 2: Bypass server address to prevent absolute deadlock
           {
@@ -509,11 +518,16 @@ class V2RayService {
             "ip": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "::1/128", "fc00::/7", "fe80::/10"],
             "outboundTag": "direct",
           },
-          // Rule 4: Bypass DNS servers to prevent resolution deadlock
+          // Rule 4 (FIXED): Route our DNS resolver queries THROUGH the tunnel
+          // instead of bypassing it. This is the key fix — previously these
+          // were sent "direct", which leaked every domain lookup to the ISP
+          // and let it block/mangle results even while the tunnel itself
+          // worked fine. effectiveDns are static IPs, so tunneling them is
+          // safe and does not create a resolution deadlock.
           {
             "type": "field",
-            "ip": systemDnsServers.isNotEmpty ? systemDnsServers : ["8.8.8.8", "1.1.1.1", "1.0.0.1", "8.8.4.4"],
-            "outboundTag": "direct",
+            "ip": effectiveDns,
+            "outboundTag": "proxy",
           },
           // Rule 5: Hijack inbound traffic to proxy
           {
