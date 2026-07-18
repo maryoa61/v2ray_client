@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:v2ray_dan/v2ray_dan.dart';
 import '../models/v2ray_server.dart';
@@ -27,9 +29,46 @@ class V2RayService {
   bool _isConnectInProgress = false;
   ProxyMode _proxyMode = ProxyMode.socks; // Default to SOCKS
 
+  // ---------------------------------------------------------------------
+  // Auto-reconnect state
+  // ---------------------------------------------------------------------
+  // The last server + connection params the user explicitly connected to.
+  // Kept around so we can silently redial it if the connection drops for
+  // a reason the user didn't ask for (network switch, core crash, etc).
+  V2RayServer? _lastServer;
+  String? _lastCustomDns;
+  bool _lastProxyOnly = false;
+  bool _lastUseSystemDns = true;
+  ProxyMode? _lastProxyMode;
+
+  // True only while disconnect() is running because the USER tapped
+  // disconnect (or switched servers). False for internal/defensive
+  // disconnects (e.g. the "clean slate" reset at the top of connect()).
+  // Auto-reconnect only fires when a drop happens with this flag false.
+  bool _userInitiatedDisconnect = true;
+
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  ConnectivityResult? _lastConnectivityResult;
+  Timer? _reconnectTimer;
+  int _reconnectAttempts = 0;
+  bool _isReconnecting = false;
+
+  // User-configurable via StorageService.saveAutoReconnectSettings().
+  // Sane defaults here match StorageService's own defaults, so behavior
+  // is correct even before init() has had a chance to load saved prefs.
+  bool _autoReconnectEnabled = true;
+  int _maxReconnectAttempts = 6;
+
+  // Exponential backoff schedule: 1s, 2s, 4s, 8s, 8s, 8s...
+  static const List<int> _backoffSeconds = [1, 2, 4, 8];
+
+  bool get autoReconnectEnabled => _autoReconnectEnabled;
+  int get maxReconnectAttempts => _maxReconnectAttempts;
+
   VPNConnectionStatus get status => _status;
   V2RayServer? get currentServer => _currentServer;
   String? get lastError => _lastError;
+  bool get isReconnecting => _isReconnecting;
 
   // Stream for status changes
   final StreamController<VPNConnectionStatus> _statusController = StreamController<VPNConnectionStatus>.broadcast();
@@ -42,12 +81,13 @@ class V2RayService {
         final newStatus = _mapPluginStatus(status.state);
         if (_status != newStatus) {
           _logger.info('Native Status Broadcast: ${status.state} -> $newStatus');
-          _safeEmit(newStatus);
+          _handleNativeStatusChange(newStatus);
         }
       },
     );
     _logger.info('V2RayService Singleton initialized');
     _setupAndroidLogReceiver();
+    _startConnectivityMonitoring();
   }
 
   // ---------------------------------------------------------------------
@@ -74,6 +114,25 @@ class V2RayService {
       _statusController.add(status);
     } else {
       _logger.warning('Attempted to emit status "$status" after V2RayService was disposed (ignored).');
+    }
+  }
+
+  // Handles status broadcasts coming from the native side (outside of our
+  // own connect()/disconnect() calls). This is where an unexpected drop
+  // (native crash, VPN killed by OS, server closed the connection, etc.)
+  // gets detected and routed into the auto-reconnect flow.
+  void _handleNativeStatusChange(VPNConnectionStatus newStatus) {
+    final wasConnected = _status == VPNConnectionStatus.connected;
+    _safeEmit(newStatus);
+
+    final droppedUnexpectedly =
+        wasConnected &&
+        (newStatus == VPNConnectionStatus.disconnected || newStatus == VPNConnectionStatus.error) &&
+        !_userInitiatedDisconnect;
+
+    if (droppedUnexpectedly) {
+      _logger.warning('Connection dropped unexpectedly (native). Triggering auto-reconnect.');
+      _scheduleReconnect();
     }
   }
 
@@ -113,6 +172,166 @@ class V2RayService {
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Connectivity monitoring (for auto-reconnect on network switch)
+  //
+  // Watches for Wi-Fi <-> mobile data changes (or losing connectivity
+  // entirely). If we're supposed to be connected (we have a _lastServer
+  // and the drop wasn't user-initiated) and the network flips, we kick
+  // off a reconnect. We don't reconnect just because connectivity
+  // *appeared* — only on a genuine change while we expect to be online,
+  // to avoid redialing on app startup.
+  // ---------------------------------------------------------------------
+  void _startConnectivityMonitoring() {
+    _connectivitySubscription?.cancel();
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((results) {
+      final result = results.isNotEmpty ? results.first : ConnectivityResult.none;
+      final previous = _lastConnectivityResult;
+      _lastConnectivityResult = result;
+
+      // First callback just primes _lastConnectivityResult; nothing to react to yet.
+      if (previous == null) return;
+
+      if (previous == result) return; // no real change (duplicate event)
+
+      _logger.info('Connectivity changed: $previous -> $result');
+
+      if (result == ConnectivityResult.none) {
+        // Network gone entirely — nothing to do until it comes back;
+        // the reconnect loop (if already running) will keep retrying
+        // and naturally succeed once connectivity returns.
+        return;
+      }
+
+      final shouldBeConnected = _lastServer != null && !_userInitiatedDisconnect;
+      final currentlyHealthy = _status == VPNConnectionStatus.connected && !_isReconnecting;
+
+      if (shouldBeConnected && !currentlyHealthy) {
+        _logger.info('Network switched while VPN should be active — reconnecting...');
+        _scheduleReconnect(immediate: true);
+      } else if (shouldBeConnected && currentlyHealthy) {
+        // Underlying interface changed (e.g. Wi-Fi -> mobile data) while
+        // "connected". The V2Ray tunnel's sockets are bound to the old
+        // interface and will silently die, so proactively restart it
+        // instead of waiting for a timeout to prove that.
+        _logger.info('Network interface changed while connected — restarting tunnel to rebind sockets.');
+        _scheduleReconnect(immediate: true);
+      }
+    });
+  }
+
+  // Schedules a reconnect attempt using exponential backoff. Safe to call
+  // repeatedly — it just resets the pending timer rather than stacking
+  // multiple attempts.
+  void _scheduleReconnect({bool immediate = false}) {
+    if (!_autoReconnectEnabled) {
+      _logger.info('Auto-reconnect skipped: feature disabled by user.');
+      return;
+    }
+    if (_lastServer == null) {
+      _logger.info('Auto-reconnect skipped: no previous server to reconnect to.');
+      return;
+    }
+    if (_userInitiatedDisconnect) {
+      _logger.info('Auto-reconnect skipped: last disconnect was user-initiated.');
+      return;
+    }
+    if (_reconnectAttempts >= _maxReconnectAttempts) {
+      _logger.error('Auto-reconnect giving up after $_reconnectAttempts attempts.');
+      _isReconnecting = false;
+      return;
+    }
+
+    _reconnectTimer?.cancel();
+    _isReconnecting = true;
+
+    final delaySeconds = immediate
+        ? 0
+        : _backoffSeconds[min(_reconnectAttempts, _backoffSeconds.length - 1)];
+
+    _logger.info('Auto-reconnect attempt #${_reconnectAttempts + 1} in ${delaySeconds}s...');
+
+    _reconnectTimer = Timer(Duration(seconds: delaySeconds), () async {
+      // Conditions may have changed while we were waiting (user manually
+      // disconnected, or manually connected elsewhere) — bail out cleanly.
+      if (_userInitiatedDisconnect || _lastServer == null) {
+        _isReconnecting = false;
+        return;
+      }
+      if (_isConnectInProgress) {
+        // Something else is already connecting; try again shortly.
+        _scheduleReconnect();
+        return;
+      }
+
+      _reconnectAttempts++;
+      final server = _lastServer!;
+      _logger.info('Reconnecting to ${server.name} (attempt $_reconnectAttempts/$_maxReconnectAttempts)...');
+
+      final success = await connect(
+        server,
+        customDns: _lastCustomDns,
+        proxyOnly: _lastProxyOnly,
+        useSystemDns: _lastUseSystemDns,
+        proxyMode: _lastProxyMode,
+        isAutoReconnect: true,
+      );
+
+      if (success) {
+        _logger.info('✓ Auto-reconnect succeeded.');
+        _reconnectAttempts = 0;
+        _isReconnecting = false;
+      } else {
+        _logger.warning('Auto-reconnect attempt failed, scheduling next try.');
+        _scheduleReconnect();
+      }
+    });
+  }
+
+  void _cancelReconnect() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _reconnectAttempts = 0;
+    _isReconnecting = false;
+  }
+
+  void _loadAutoReconnectSettings() {
+    try {
+      final settings = _storage?.loadAutoReconnectSettings();
+      if (settings != null) {
+        _autoReconnectEnabled = settings['enabled'] as bool? ?? true;
+        _maxReconnectAttempts = settings['maxAttempts'] as int? ?? 6;
+        _logger.info('Auto-reconnect settings loaded: enabled=$_autoReconnectEnabled, maxAttempts=$_maxReconnectAttempts');
+      }
+    } catch (e) {
+      _logger.warning('Failed to load auto-reconnect settings, using defaults: $e');
+    }
+  }
+
+  // Lets the UI (e.g. a settings screen) change auto-reconnect behavior
+  // at runtime. Persists via StorageService so it survives app restarts.
+  Future<void> setAutoReconnectSettings({bool? enabled, int? maxAttempts}) async {
+    if (enabled != null) _autoReconnectEnabled = enabled;
+    if (maxAttempts != null) _maxReconnectAttempts = maxAttempts;
+
+    _logger.info('Auto-reconnect settings updated: enabled=$_autoReconnectEnabled, maxAttempts=$_maxReconnectAttempts');
+
+    // If the user just turned it off, stop any pending/in-flight attempt
+    // immediately instead of waiting for it to naturally give up.
+    if (!_autoReconnectEnabled) {
+      _cancelReconnect();
+    }
+
+    try {
+      await _storage?.saveAutoReconnectSettings(
+        enabled: _autoReconnectEnabled,
+        maxAttempts: _maxReconnectAttempts,
+      );
+    } catch (e) {
+      _logger.warning('Failed to persist auto-reconnect settings: $e');
+    }
+  }
+
   VPNConnectionStatus _mapPluginStatus(String state) {
     switch (state.toLowerCase()) {
       case 'connected':
@@ -142,6 +361,7 @@ class V2RayService {
 
       // Initialize storage so fragment settings (and future settings) are readable.
       _storage ??= await StorageService.init();
+      _loadAutoReconnectSettings();
 
       // CRITICAL: Initialize the V2Ray plugin before first use
       // This is required by flutter_v2ray_client and sets up the native services
@@ -209,6 +429,12 @@ class V2RayService {
   Future<void> fullSystemReset() async {
     _logger.warning('========== INITIATING FULL SYSTEM RESET ==========');
 
+    // A full reset is always user-initiated — make sure auto-reconnect
+    // doesn't try to bring the tunnel back up right before we exit.
+    _userInitiatedDisconnect = true;
+    _cancelReconnect();
+    _lastServer = null;
+
     // Force stop V2Ray
     try {
       await _v2rayPlugin.stopV2Ray();
@@ -235,11 +461,19 @@ class V2RayService {
     bool proxyOnly = false,
     bool useSystemDns = true,
     ProxyMode? proxyMode,
+    bool isAutoReconnect = false,
   }) async {
     _logger.info('========== Starting connection process ==========');
     _logger.info('Mode: ${proxyOnly ? "Proxy Only" : "VPN (System-wide)"}');
     _logger.info('Server: ${server.name} (${server.address}:${server.port})');
     _logger.info('Protocol: ${server.protocol}');
+    if (isAutoReconnect) {
+      _logger.info('(this is an auto-reconnect attempt)');
+    }
+
+    // Any explicit call to connect() — including auto-reconnect redials —
+    // means we're no longer in a "user wants to be disconnected" state.
+    _userInitiatedDisconnect = false;
 
     // Set proxy mode (with default)
     _proxyMode = proxyMode ?? ProxyMode.socks;
@@ -254,7 +488,7 @@ class V2RayService {
 
     try {
       // Use a slightly longer timeout to prevent premature "stuck" declarations
-      return await _runConnectLogic(server, customDns, proxyOnly, useSystemDns).timeout(
+      final result = await _runConnectLogic(server, customDns, proxyOnly, useSystemDns).timeout(
         const Duration(seconds: 45), // Increased timeout to allow for macOS admin prompt interaction
         onTimeout: () {
           _logger.error('Connection logic timed out after 45 seconds');
@@ -263,6 +497,18 @@ class V2RayService {
           return false;
         },
       );
+
+      if (result) {
+        // Remember exactly what "being connected" means so auto-reconnect
+        // can faithfully reproduce it later.
+        _lastServer = server;
+        _lastCustomDns = customDns;
+        _lastProxyOnly = proxyOnly;
+        _lastUseSystemDns = useSystemDns;
+        _lastProxyMode = proxyMode;
+      }
+
+      return result;
     } catch (e, stackTrace) {
       _logger.error('========== Connection failed ==========');
       _logger.error('Error: $e', stackTrace: stackTrace);
@@ -303,9 +549,12 @@ class V2RayService {
     // Step 1: Force reset existing connections
     _logger.info('Ensuring previous connections are closed...');
     try {
-      // Unconditionally disconnect to ensure clean state
-      // We don't check _status here because it might be out of sync with native side
-      await disconnect();
+      // Unconditionally disconnect to ensure clean state. This is an
+      // internal/defensive disconnect, not a user action, so it must NOT
+      // be treated as "the user wants to stay disconnected" — otherwise
+      // every connect() call would immediately disarm auto-reconnect for
+      // the connection it's about to establish.
+      await disconnect(userInitiated: false);
       await Future.delayed(const Duration(milliseconds: 500));
     } catch (e) {
       _logger.warning('Reset warning (non-fatal): $e');
@@ -424,6 +673,37 @@ class V2RayService {
       }
       if (!outboundsList.any((o) => o['tag'] == 'dns-out')) {
         outboundsList.add({'tag': 'dns-out', 'protocol': 'dns', 'settings': {}});
+      }
+
+      // Mux (multiplexing) on the main proxy outbound.
+      // Bundles multiple logical TCP streams over a single connection to
+      // the server, cutting down on handshake overhead for pages/apps
+      // that open many concurrent connections. Skipped for protocols
+      // where V2Ray's mux is known to misbehave (e.g. some QUIC-based
+      // transports) — those advertise their own multiplexing already.
+      try {
+        final proxyOutbound = outboundsList.firstWhere(
+          (o) => o['tag'] == 'proxy',
+          orElse: () => null,
+        );
+        if (proxyOutbound != null) {
+          final network = (proxyOutbound['streamSettings']?['network'] as String?)?.toLowerCase();
+          final muxIncompatible = network == 'quic';
+
+          if (!muxIncompatible) {
+            proxyOutbound['mux'] = {
+              'enabled': true,
+              'concurrency': 8,
+            };
+            _logger.info('Mux enabled on proxy outbound (concurrency: 8)');
+          } else {
+            _logger.info('Mux skipped: incompatible with $network transport');
+          }
+        } else {
+          _logger.warning('No "proxy" outbound found — skipping Mux setup');
+        }
+      } catch (e) {
+        _logger.warning('Failed to apply Mux settings (continuing without): $e');
       }
 
       // Packet Fragment (TLS handshake fragmentation to evade DPI).
@@ -621,6 +901,10 @@ class V2RayService {
       _safeEmit(VPNConnectionStatus.connected);
     }
 
+    // A successful (re)connection means the auto-reconnect loop, if it
+    // was running, has done its job.
+    _cancelReconnect();
+
     _logger.info('========== Connection successful ==========');
     _logger.info('Server: ${server.name}');
     _logger.info('Mode: ${proxyOnly ? "Proxy (use localhost:10808)" : "VPN (system-wide)"}');
@@ -647,10 +931,23 @@ class V2RayService {
     return true;
   }
 
-  // Disconnect from V2Ray server
-  Future<void> disconnect() async {
+  // Disconnect from V2Ray server.
+  //
+  // [userInitiated] distinguishes a deliberate disconnect (user tapped
+  // the button, switched servers from the UI, signed out, etc.) from an
+  // internal/defensive one (the "clean slate" reset at the top of
+  // connect(), or a reconnect cycle tearing down before redialing).
+  // Only a user-initiated disconnect disarms auto-reconnect and clears
+  // the "last server" the app will otherwise try to restore.
+  Future<void> disconnect({bool userInitiated = true}) async {
     _logger.info('========== Starting disconnection process ==========');
-    _logger.info('Disconnecting from: ${_currentServer?.name ?? "VPN"}');
+    _logger.info('Disconnecting from: ${_currentServer?.name ?? "VPN"} (userInitiated: $userInitiated)');
+
+    if (userInitiated) {
+      _userInitiatedDisconnect = true;
+      _cancelReconnect();
+      _lastServer = null;
+    }
 
     try {
       _safeEmit(VPNConnectionStatus.disconnecting);
@@ -885,6 +1182,9 @@ class V2RayService {
     if (_isDisposed) return;
     _isDisposed = true;
     _stopLogPolling();
+    _cancelReconnect();
+    _connectivitySubscription?.cancel();
+    _connectivitySubscription = null;
     if (!_statusController.isClosed) {
       _statusController.close();
     }
