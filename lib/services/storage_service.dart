@@ -20,6 +20,7 @@ class StorageService {
   static const String _censorAddressesKey = 'censor_addresses';
   static const String _urlHistoryKey = 'url_history';
   static const String _proxyModeKey = 'proxy_mode';
+  static const String _fragmentSettingsKey = 'fragment_settings';
 
   final SharedPreferences _prefs;
 
@@ -195,6 +196,47 @@ class StorageService {
     final modeStr = _prefs.getString(_proxyModeKey);
     if (modeStr == null) return ProxyMode.defaultMode;
     return ProxyMode.fromJson(modeStr);
+  }
+
+  // Packet Fragment settings (TLS fragmentation to evade DPI).
+  // Stored as a flat JSON map — no dedicated model class exists yet,
+  // so this keeps it self-contained here rather than adding a new
+  // models/fragment_settings.dart file speculatively.
+  Future<void> saveFragmentSettings({
+    required bool enabled,
+    required int lengthMin,
+    required int lengthMax,
+    required int intervalMin,
+    required int intervalMax,
+    required int packetsMin,
+    required int packetsMax,
+  }) async {
+    final map = {
+      'enabled': enabled,
+      'lengthMin': lengthMin,
+      'lengthMax': lengthMax,
+      'intervalMin': intervalMin,
+      'intervalMax': intervalMax,
+      'packetsMin': packetsMin,
+      'packetsMax': packetsMax,
+    };
+    await _prefs.setString(_fragmentSettingsKey, json.encode(map));
+  }
+
+  Map<String, dynamic> loadFragmentSettings() {
+    final jsonString = _prefs.getString(_fragmentSettingsKey);
+    if (jsonString == null) {
+      return {
+        'enabled': false,
+        'lengthMin': 50,
+        'lengthMax': 100,
+        'intervalMin': 10,
+        'intervalMax': 20,
+        'packetsMin': 1,
+        'packetsMax': 3,
+      };
+    }
+    return json.decode(jsonString) as Map<String, dynamic>;
   }
 
   // Clear all data
