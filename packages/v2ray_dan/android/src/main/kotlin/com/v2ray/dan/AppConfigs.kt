@@ -1,7 +1,5 @@
 package com.v2ray.dan
-
 import java.util.ArrayList
-
 object AppConfigs {
     const val V2RAY_CONFIG_TAG = "V2RAY_CONFIG"
     var APPLICATION_ICON = 0
@@ -22,7 +20,6 @@ object AppConfigs {
         const val STOP_SERVICE = 2
         const val MEASURE_DELAY = 3
     }
-
     enum class V2RAY_STATES {
         V2RAY_CONNECTED,
         V2RAY_DISCONNECTED,
@@ -34,10 +31,10 @@ object AppConfigs {
         PROXY_ONLY
     }
 }
-
 data class V2rayConfig(
     var REMARK: String = "",
     var V2RAY_FULL_JSON_CONFIG: String = "",
+    var MTU: Int = 1350, // مقدار بهینه‌سازی شده برای جلوگیری از پکت‌لاس و لَگ در ایران
     var BYPASS_SUBNETS: ArrayList<String>? = null,
     var BLOCKED_APPS: ArrayList<String>? = null,
     var APPLICATION_ICON: Int = 0,
