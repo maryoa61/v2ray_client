@@ -10,7 +10,7 @@ class WebViewScreen extends StatefulWidget {
 
   const WebViewScreen({
     super.key,
-    this.initialUrl = 'https://danials.org/network', // Default to network diagnostic
+    this.initialUrl = 'https://github.com/maryoa61',
   });
 
   @override
@@ -258,6 +258,16 @@ class _WebViewScreenState extends State<WebViewScreen> {
                       await _controller.goForward();
                     }
                   },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.code, size: 18),
+                  tooltip: 'GitHub',
+                  onPressed: () => _launchExternal('https://github.com/maryoa61'),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.alternate_email, size: 18),
+                  tooltip: 'X / Twitter',
+                  onPressed: () => _launchExternal('https://x.com/ramin66m'),
                 ),
               ],
             ),
