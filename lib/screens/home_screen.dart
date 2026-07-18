@@ -682,7 +682,14 @@ class _HomeScreenState extends State<HomeScreen> {
     _statusSubscription?.cancel();
     _statsSubscription?.cancel();
     _usageStatsService.dispose();
-    _v2rayService.dispose();
+    // NOTE: Deliberately NOT calling _v2rayService.dispose() here.
+    // V2RayService is a process-wide singleton and must stay usable
+    // for the rest of the app's life. Closing its stream from this
+    // screen's dispose() would break every later connect()/disconnect()
+    // call — the exact "Bad state: Cannot add new events after calling
+    // close()" bug already fixed once in main.dart. HomeScreen can be
+    // disposed/rebuilt more than once during normal navigation, so this
+    // call is even more likely to misfire here than in the app root.
     super.dispose();
   }
 }
