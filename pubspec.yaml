@@ -8,17 +8,13 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
-
   # V2Ray core integration
   v2ray_dan:
     path: packages/v2ray_dan
-
   # State management
   provider: ^6.1.1
-
   # Local storage
   shared_preferences: ^2.2.2
-
   # Utilities
   uuid: ^4.2.2
   http: ^1.1.2
@@ -26,13 +22,14 @@ dependencies:
   package_info_plus: ^9.0.0
   url_launcher: ^6.3.2
   flutter_markdown_plus: ^1.0.5
+  # Network connectivity monitoring (used by V2RayService for auto-reconnect)
+  connectivity_plus: ^6.0.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
 flutter:
   uses-material-design: true
-
   assets:
     - assets/logo.png
     - CHANGELOG.md
