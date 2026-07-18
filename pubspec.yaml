@@ -25,7 +25,9 @@ dependencies:
   # Network connectivity monitoring (used by V2RayService for auto-reconnect)
   connectivity_plus: ^6.0.0
   # Official brand icons (GitHub, X/Twitter) used in the in-app browser
-  font_awesome_flutter: ^10.7.0
+  # NOTE: must be >=11.0.0 — 10.x uses "extends IconData", which breaks on
+  # Flutter versions where IconData was made a final class.
+  font_awesome_flutter: ^11.0.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
