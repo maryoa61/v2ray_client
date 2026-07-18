@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../theme/app_theme.dart';
 import '../services/storage_service.dart';
 
@@ -10,7 +11,7 @@ class WebViewScreen extends StatefulWidget {
 
   const WebViewScreen({
     super.key,
-    this.initialUrl = 'https://github.com/maryoa61',
+    this.initialUrl = 'about:blank',
   });
 
   @override
@@ -39,7 +40,9 @@ class _WebViewScreenState extends State<WebViewScreen> {
   void initState() {
     super.initState();
     _currentUrl = widget.initialUrl;
-    _urlController.text = _currentUrl;
+    // Don't show the internal "about:blank" placeholder in the address bar —
+    // leave it empty so the hint text ("Search or enter website name") shows.
+    _urlController.text = (_currentUrl == 'about:blank') ? '' : _currentUrl;
     _loadHistory();
     _loadFragmentSettings();
 
@@ -471,20 +474,31 @@ class _WebViewScreenState extends State<WebViewScreen> {
                     }
                   },
                 ),
+              ],
+            ),
+            // Twitter (left) — Fragment (middle) — GitHub (right).
+            // The fragment icon opens the settings sheet built above, whose
+            // own SAVE button (_saveFragmentSettings) is what confirms and
+            // persists whatever the user typed in there.
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
                 IconButton(
-                  icon: Icon(Icons.call_split, size: 18, color: _fragmentEnabled ? AppTheme.accentColor : null),
-                  tooltip: 'Packet Fragment',
-                  onPressed: _showFragmentSettings,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.code, size: 18),
-                  tooltip: 'GitHub',
-                  onPressed: () => _launchExternal('https://github.com/maryoa61'),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.alternate_email, size: 18),
+                  icon: const FaIcon(FontAwesomeIcons.xTwitter, size: 16),
                   tooltip: 'X / Twitter',
                   onPressed: () => _launchExternal('https://x.com/ramin66m'),
+                ),
+                const SizedBox(width: 6),
+                IconButton(
+                  icon: Icon(Icons.call_split, size: 18, color: _fragmentEnabled ? AppTheme.accentColor : null),
+                  tooltip: 'Packet Fragment settings',
+                  onPressed: _showFragmentSettings,
+                ),
+                const SizedBox(width: 6),
+                IconButton(
+                  icon: const FaIcon(FontAwesomeIcons.github, size: 18),
+                  tooltip: 'GitHub',
+                  onPressed: () => _launchExternal('https://github.com/maryoa61'),
                 ),
               ],
             ),
