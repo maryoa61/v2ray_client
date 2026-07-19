@@ -547,7 +547,7 @@ class V2RayService {
 
   // ---------------------------------------------------------------------
   // Builds a fully-runnable V2Ray config: inbounds, direct/dns-out
-  // outbounds, Mux, fragment, DNS servers, and the IP/domain bypass +
+  // outbounds, fragment, DNS servers, and the IP/domain bypass +
   // routing rules for the proxy server itself.
   //
   // This is the SINGLE source of truth for config generation. It is used
@@ -605,37 +605,6 @@ class V2RayService {
     }
     if (!outboundsList.any((o) => o['tag'] == 'dns-out')) {
       outboundsList.add({'tag': 'dns-out', 'protocol': 'dns', 'settings': {}});
-    }
-
-    // Mux (multiplexing) on the main proxy outbound.
-    // Bundles multiple logical TCP streams over a single connection to
-    // the server, cutting down on handshake overhead for pages/apps
-    // that open many concurrent connections. Skipped for protocols
-    // where V2Ray's mux is known to misbehave (e.g. some QUIC-based
-    // transports) — those advertise their own multiplexing already.
-    try {
-      final proxyOutbound = outboundsList.firstWhere(
-        (o) => o['tag'] == 'proxy',
-        orElse: () => null,
-      );
-      if (proxyOutbound != null) {
-        final network = (proxyOutbound['streamSettings']?['network'] as String?)?.toLowerCase();
-        final muxIncompatible = network == 'quic';
-
-        if (!muxIncompatible) {
-          proxyOutbound['mux'] = {
-            'enabled': true,
-            'concurrency': 8,
-          };
-          _logger.info('Mux enabled on proxy outbound (concurrency: 8)');
-        } else {
-          _logger.info('Mux skipped: incompatible with $network transport');
-        }
-      } else {
-        _logger.warning('No "proxy" outbound found — skipping Mux setup');
-      }
-    } catch (e) {
-      _logger.warning('Failed to apply Mux settings (continuing without): $e');
     }
 
     // Packet Fragment (TLS handshake fragmentation to evade DPI).
@@ -818,7 +787,7 @@ class V2RayService {
 
     // Step 4: Generate V2Ray configuration (shared with getServerDelay(), so
     // both the real tunnel and the ping test always see the exact same
-    // inbounds/outbounds/routing/Mux/DNS setup).
+    // inbounds/outbounds/routing/DNS setup).
     _logger.info('Step 3/7: Generating V2Ray configuration...');
 
     String configJson;
@@ -996,7 +965,7 @@ class V2RayService {
   // Get server delay (ping).
   //
   // Uses the exact same config generation as connect() (inbounds, direct/
-  // dns-out outbounds, routing rules, Mux, fragment) via
+  // dns-out outbounds, routing rules, fragment) via
   // _buildRunnableConfig(), instead of the previous bare
   // server.toV2RayConfig() call. A bare config has no routing/outbound
   // rules for DNS or the bypass IP, so the native ping test could fail or
