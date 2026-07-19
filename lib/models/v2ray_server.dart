@@ -6,7 +6,7 @@ class V2RayServer {
   final String address;
   final int port;
   final String uuid;
-  final String protocol; // vmess, vless
+  final String protocol; // vmess, vless, trojan, shadowsocks
   final int alterId;
   final String network; // tcp, ws, etc.
   final String type; // none, http, etc.
@@ -22,6 +22,8 @@ class V2RayServer {
   final String? publicKey; // For Reality
   final String? shortId; // For Reality
   final String? spiderX; // For Reality
+  final String? password; // For Trojan and Shadowsocks
+  final String? ssMethod; // For Shadowsocks (e.g. aes-256-gcm, chacha20-ietf-poly1305)
 
   V2RayServer({
     required this.id,
@@ -45,6 +47,8 @@ class V2RayServer {
     this.publicKey,
     this.shortId,
     this.spiderX,
+    this.password,
+    this.ssMethod,
   });
 
   // Parse from any supported link
@@ -54,6 +58,10 @@ class V2RayServer {
       return V2RayServer.fromVmessLink(trimmed);
     } else if (trimmed.startsWith('vless://')) {
       return V2RayServer.fromVlessLink(trimmed);
+    } else if (trimmed.startsWith('trojan://')) {
+      return V2RayServer.fromTrojanLink(trimmed);
+    } else if (trimmed.startsWith('ss://')) {
+      return V2RayServer.fromShadowsocksLink(trimmed);
     } else {
       throw Exception('Unsupported link protocol');
     }
@@ -166,6 +174,172 @@ class V2RayServer {
     }
   }
 
+  // Parse from trojan:// share link
+  // Format: trojan://password@server:port?security=tls&sni=...&type=ws&host=...&path=...#remark
+  factory V2RayServer.fromTrojanLink(String trojanLink) {
+    try {
+      final uri = Uri.parse(trojanLink);
+      if (uri.scheme != 'trojan') {
+        throw Exception('Invalid trojan link format');
+      }
+
+      final id = DateTime.now().millisecondsSinceEpoch.toString();
+      final trojanPassword = Uri.decodeComponent(uri.userInfo);
+      final address = uri.host;
+      final port = uri.port == 0 ? 443 : uri.port;
+
+      String name = 'Server $id';
+      if (uri.fragment.isNotEmpty) {
+        name = Uri.decodeComponent(uri.fragment);
+      } else if (uri.queryParameters.containsKey('remark')) {
+        name = Uri.decodeComponent(uri.queryParameters['remark']!);
+      }
+
+      final queryParams = uri.queryParameters;
+
+      return V2RayServer(
+        id: id,
+        name: name,
+        address: address,
+        port: port,
+        uuid: '', // Trojan doesn't use uuid
+        password: trojanPassword,
+        protocol: 'trojan',
+        network: queryParams['type'] ?? 'tcp',
+        // Trojan is TLS by default unless explicitly disabled
+        tls: queryParams['security'] ?? 'tls',
+        host: queryParams['host'],
+        path: queryParams['path'],
+        sni: queryParams['sni'],
+        alpn: queryParams['alpn'],
+        fingerprint: queryParams['fp'] ?? queryParams['fingerprint'],
+      );
+    } catch (e) {
+      throw Exception('Failed to parse trojan link: $e');
+    }
+  }
+
+  // Parse from ss:// share link
+  // Supports SIP002: ss://BASE64(method:password)@server:port#remark
+  // Also supports legacy: ss://BASE64(method:password@server:port)#remark
+  factory V2RayServer.fromShadowsocksLink(String ssLink) {
+    try {
+      final trimmedLink = ssLink.trim();
+      if (!trimmedLink.startsWith('ss://')) {
+        throw Exception('Invalid shadowsocks link format');
+      }
+
+      String body = trimmedLink.substring(5);
+
+      // Split off the fragment (remark) first
+      String remark = '';
+      final hashIndex = body.indexOf('#');
+      if (hashIndex != -1) {
+        remark = Uri.decodeComponent(body.substring(hashIndex + 1));
+        body = body.substring(0, hashIndex);
+      }
+
+      // Strip any query string (plugin params) - not used here
+      final queryIndex = body.indexOf('?');
+      if (queryIndex != -1) {
+        body = body.substring(0, queryIndex);
+      }
+
+      String method;
+      String ssPassword;
+      String address;
+      int port;
+
+      if (body.contains('@')) {
+        // SIP002 format: BASE64(method:password)@server:port
+        final atIndex = body.lastIndexOf('@');
+        String userInfo = body.substring(0, atIndex);
+        final hostPort = body.substring(atIndex + 1);
+
+        // userInfo might be base64 or plain "method:password"
+        String decodedUserInfo;
+        try {
+          String padded = userInfo;
+          while (padded.length % 4 != 0) {
+            padded += '=';
+          }
+          decodedUserInfo = utf8.decode(base64.decode(padded));
+        } catch (e) {
+          try {
+            String urlSafe = userInfo.replaceAll('-', '+').replaceAll('_', '/');
+            while (urlSafe.length % 4 != 0) {
+              urlSafe += '=';
+            }
+            decodedUserInfo = utf8.decode(base64.decode(urlSafe));
+          } catch (e2) {
+            decodedUserInfo = userInfo; // assume already plain text
+          }
+        }
+
+        final colonIndex = decodedUserInfo.indexOf(':');
+        if (colonIndex == -1) {
+          throw Exception('Invalid shadowsocks user info');
+        }
+        method = decodedUserInfo.substring(0, colonIndex);
+        ssPassword = decodedUserInfo.substring(colonIndex + 1);
+
+        final hostPortColonIndex = hostPort.lastIndexOf(':');
+        if (hostPortColonIndex == -1) {
+          throw Exception('Invalid shadowsocks host:port');
+        }
+        address = hostPort.substring(0, hostPortColonIndex);
+        port = int.parse(hostPort.substring(hostPortColonIndex + 1));
+      } else {
+        // Legacy format: everything is base64 encoded
+        String padded = body;
+        while (padded.length % 4 != 0) {
+          padded += '=';
+        }
+        String decoded;
+        try {
+          decoded = utf8.decode(base64.decode(padded));
+        } catch (e) {
+          final urlSafe = body.replaceAll('-', '+').replaceAll('_', '/');
+          String p2 = urlSafe;
+          while (p2.length % 4 != 0) {
+            p2 += '=';
+          }
+          decoded = utf8.decode(base64.decode(p2));
+        }
+
+        // decoded format: method:password@server:port
+        final atIndex = decoded.lastIndexOf('@');
+        final userInfo = decoded.substring(0, atIndex);
+        final hostPort = decoded.substring(atIndex + 1);
+
+        final colonIndex = userInfo.indexOf(':');
+        method = userInfo.substring(0, colonIndex);
+        ssPassword = userInfo.substring(colonIndex + 1);
+
+        final hostPortColonIndex = hostPort.lastIndexOf(':');
+        address = hostPort.substring(0, hostPortColonIndex);
+        port = int.parse(hostPort.substring(hostPortColonIndex + 1));
+      }
+
+      final id = DateTime.now().millisecondsSinceEpoch.toString();
+
+      return V2RayServer(
+        id: id,
+        name: remark.isNotEmpty ? remark : 'Server $id',
+        address: address,
+        port: port,
+        uuid: '', // Shadowsocks doesn't use uuid
+        password: ssPassword,
+        ssMethod: method,
+        protocol: 'shadowsocks',
+        network: 'tcp',
+        tls: 'none',
+      );
+    } catch (e) {
+      throw Exception('Failed to parse shadowsocks link: $e');
+    }
+  }
+
   // Convert to JSON for storage
   Map<String, dynamic> toJson() {
     return {
@@ -190,6 +364,8 @@ class V2RayServer {
       'publicKey': publicKey,
       'shortId': shortId,
       'spiderX': spiderX,
+      'password': password,
+      'ssMethod': ssMethod,
     };
   }
 
@@ -217,6 +393,8 @@ class V2RayServer {
       publicKey: json['publicKey'] as String?,
       shortId: json['shortId'] as String?,
       spiderX: json['spiderX'] as String?,
+      password: json['password'] as String?,
+      ssMethod: json['ssMethod'] as String?,
     );
   }
 
@@ -269,7 +447,7 @@ class V2RayServer {
           },
         ],
       };
-    } else {
+    } else if (protocol == 'vless') {
       final userSettings = <String, dynamic>{'id': uuid, 'encryption': encryption ?? 'none'};
 
       if (flow != null && flow!.isNotEmpty) {
@@ -285,10 +463,40 @@ class V2RayServer {
           },
         ],
       };
+    } else if (protocol == 'trojan') {
+      return {
+        'servers': [
+          {
+            'address': address,
+            'port': port,
+            'password': password ?? '',
+            if (name.isNotEmpty) 'email': name,
+          },
+        ],
+      };
+    } else if (protocol == 'shadowsocks') {
+      return {
+        'servers': [
+          {
+            'address': address,
+            'port': port,
+            'method': ssMethod ?? 'aes-256-gcm',
+            'password': password ?? '',
+          },
+        ],
+      };
     }
+
+    // Fallback (shouldn't happen)
+    return {};
   }
 
   Map<String, dynamic> _buildStreamSettings() {
+    // Shadowsocks generally runs raw over tcp without extra stream wrapping
+    if (protocol == 'shadowsocks') {
+      return {'network': 'tcp', 'security': 'none'};
+    }
+
     final streamSettings = <String, dynamic>{
       'network': network,
       'security': tls == 'none' ? 'none' : tls, // Could be 'tls' or 'reality'
@@ -350,10 +558,15 @@ class V2RayServer {
   }
 
   String toShareLink() {
-    if (protocol == 'vmess') {
-      return _generateVmessShareLink();
-    } else {
-      return _generateVlessShareLink();
+    switch (protocol) {
+      case 'vmess':
+        return _generateVmessShareLink();
+      case 'trojan':
+        return _generateTrojanShareLink();
+      case 'shadowsocks':
+        return _generateShadowsocksShareLink();
+      default:
+        return _generateVlessShareLink();
     }
   }
 
@@ -420,5 +633,52 @@ class V2RayServer {
     url += '#$fragment';
 
     return url;
+  }
+
+  String _generateTrojanShareLink() {
+    String authority = '$address:$port';
+    String query = '';
+
+    if (tls.isNotEmpty && tls != 'none') {
+      query += 'security=$tls';
+    }
+
+    if (network.isNotEmpty && network != 'tcp') {
+      if (query.isNotEmpty) query += '&';
+      query += 'type=$network';
+    }
+
+    if (host != null && host!.isNotEmpty) {
+      if (query.isNotEmpty) query += '&';
+      query += 'host=${Uri.encodeComponent(host!)}';
+    }
+
+    if (path != null && path!.isNotEmpty) {
+      if (query.isNotEmpty) query += '&';
+      query += 'path=${Uri.encodeComponent(path!)}';
+    }
+
+    if (sni != null && sni!.isNotEmpty) {
+      if (query.isNotEmpty) query += '&';
+      query += 'sni=${Uri.encodeComponent(sni!)}';
+    }
+
+    final encodedPassword = Uri.encodeComponent(password ?? '');
+    final encodedName = Uri.encodeComponent(name);
+
+    String url = 'trojan://$encodedPassword@$authority';
+    if (query.isNotEmpty) url += '?$query';
+    url += '#$encodedName';
+
+    return url;
+  }
+
+  String _generateShadowsocksShareLink() {
+    final method = ssMethod ?? 'aes-256-gcm';
+    final userInfo = '$method:${password ?? ''}';
+    final encodedUserInfo = base64.encode(utf8.encode(userInfo)).replaceAll('=', '');
+    final encodedName = Uri.encodeComponent(name);
+
+    return 'ss://$encodedUserInfo@$address:$port#$encodedName';
   }
 }
