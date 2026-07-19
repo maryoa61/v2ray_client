@@ -19,12 +19,22 @@ class _AddServerScreenState extends State<AddServerScreen> {
   final _addressController = TextEditingController();
   final _portController = TextEditingController();
   final _uuidController = TextEditingController();
+  final _passwordController = TextEditingController();
   final _alterIdController = TextEditingController(text: '0');
 
   bool _showManualForm = false;
+  String _protocol = 'vmess';
   String _network = 'tcp';
+  String _ssMethod = 'aes-256-gcm';
   bool _tls = false;
   String? _parseError;
+
+  static const List<String> _ssMethods = [
+    'aes-256-gcm',
+    'aes-128-gcm',
+    'chacha20-ietf-poly1305',
+    'xchacha20-ietf-poly1305',
+  ];
 
   @override
   void initState() {
@@ -35,9 +45,12 @@ class _AddServerScreenState extends State<AddServerScreen> {
       _addressController.text = s.address;
       _portController.text = s.port.toString();
       _uuidController.text = s.uuid;
+      _passwordController.text = s.password ?? '';
       _alterIdController.text = s.alterId.toString();
+      _protocol = s.protocol;
       _network = s.network;
       _tls = s.tls == 'tls';
+      _ssMethod = s.ssMethod ?? 'aes-256-gcm';
       _showManualForm = true;
     }
   }
@@ -49,9 +62,14 @@ class _AddServerScreenState extends State<AddServerScreen> {
     _addressController.dispose();
     _portController.dispose();
     _uuidController.dispose();
+    _passwordController.dispose();
     _alterIdController.dispose();
     super.dispose();
   }
+
+  bool get _usesUuid => _protocol == 'vmess' || _protocol == 'vless';
+  bool get _usesPassword => _protocol == 'trojan' || _protocol == 'shadowsocks';
+  bool get _usesTransportOptions => _protocol == 'vmess' || _protocol == 'vless' || _protocol == 'trojan';
 
   void _importFromLink() {
     setState(() {
@@ -81,11 +99,13 @@ class _AddServerScreenState extends State<AddServerScreen> {
         name: _nameController.text.trim(),
         address: _addressController.text.trim(),
         port: int.parse(_portController.text.trim()),
-        uuid: _uuidController.text.trim(),
-        protocol: widget.server?.protocol ?? 'vmess',
+        uuid: _usesUuid ? _uuidController.text.trim() : '',
+        password: _usesPassword ? _passwordController.text.trim() : null,
+        protocol: _protocol,
         alterId: int.tryParse(_alterIdController.text.trim()) ?? 0,
-        network: _network,
-        tls: _tls ? 'tls' : 'none',
+        network: _protocol == 'shadowsocks' ? 'tcp' : _network,
+        tls: _protocol == 'shadowsocks' ? 'none' : (_tls ? 'tls' : 'none'),
+        ssMethod: _protocol == 'shadowsocks' ? _ssMethod : null,
         encryption: widget.server?.encryption,
         flow: widget.server?.flow,
       );
@@ -112,7 +132,10 @@ class _AddServerScreenState extends State<AddServerScreen> {
                 const SizedBox(height: 16),
                 TextField(
                   controller: _vmessLinkController,
-                  decoration: const InputDecoration(labelText: 'VMESS / VLESS Link', hintText: 'Paste configuration link here'),
+                  decoration: const InputDecoration(
+                    labelText: 'VMESS / VLESS / TROJAN / SHADOWSOCKS Link',
+                    hintText: 'Paste configuration link here',
+                  ),
                   maxLines: 4,
                 ),
                 if (_parseError != null)
@@ -159,6 +182,33 @@ class _AddServerScreenState extends State<AddServerScreen> {
                         ),
                       ),
                       const SizedBox(height: 24),
+                      Text(
+                        'PROTOCOL',
+                        style: TextStyle(
+                          fontSize: 10,
+                          letterSpacing: 1,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        initialValue: _protocol,
+                        items: const [
+                          DropdownMenuItem(value: 'vmess', child: Text('VMESS', style: TextStyle(fontSize: 13, letterSpacing: 1))),
+                          DropdownMenuItem(value: 'vless', child: Text('VLESS', style: TextStyle(fontSize: 13, letterSpacing: 1))),
+                          DropdownMenuItem(value: 'trojan', child: Text('TROJAN', style: TextStyle(fontSize: 13, letterSpacing: 1))),
+                          DropdownMenuItem(
+                            value: 'shadowsocks',
+                            child: Text('SHADOWSOCKS', style: TextStyle(fontSize: 13, letterSpacing: 1)),
+                          ),
+                        ],
+                        onChanged: widget.server != null
+                            ? null // Don't allow changing protocol when editing an existing server
+                            : (v) => setState(() => _protocol = v!),
+                        decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12)),
+                      ),
+                      const SizedBox(height: 16),
                       TextFormField(
                         controller: _nameController,
                         decoration: const InputDecoration(labelText: 'Connection Name'),
@@ -193,20 +243,87 @@ class _AddServerScreenState extends State<AddServerScreen> {
                         ],
                       ),
                       const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _uuidController,
-                        decoration: const InputDecoration(labelText: 'Universal Unique ID'),
-                        validator: (value) => (value == null || value.isEmpty) ? 'Required' : null,
-                      ),
-                      const SizedBox(height: 32),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
+                      if (_usesUuid)
+                        TextFormField(
+                          controller: _uuidController,
+                          decoration: const InputDecoration(labelText: 'Universal Unique ID'),
+                          validator: (value) => (value == null || value.isEmpty) ? 'Required' : null,
+                        )
+                      else if (_usesPassword)
+                        TextFormField(
+                          controller: _passwordController,
+                          decoration: const InputDecoration(labelText: 'Password'),
+                          obscureText: true,
+                          validator: (value) => (value == null || value.isEmpty) ? 'Required' : null,
+                        ),
+                      if (_protocol == 'shadowsocks') ...[
+                        const SizedBox(height: 16),
+                        Text(
+                          'ENCRYPTION METHOD',
+                          style: TextStyle(
+                            fontSize: 10,
+                            letterSpacing: 1,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white.withValues(alpha: 0.3),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<String>(
+                          initialValue: _ssMethod,
+                          items: _ssMethods
+                              .map(
+                                (e) => DropdownMenuItem(
+                                  value: e,
+                                  child: Text(e, style: const TextStyle(fontSize: 13, letterSpacing: 1)),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (v) => setState(() => _ssMethod = v!),
+                          decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12)),
+                        ),
+                      ],
+                      if (_usesTransportOptions) ...[
+                        const SizedBox(height: 32),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'TRANSPORT',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      letterSpacing: 1,
+                                      fontWeight: FontWeight.w800,
+                                      color: Colors.white.withValues(alpha: 0.3),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  DropdownButtonFormField<String>(
+                                    initialValue: _network,
+                                    items: ['tcp', 'ws', 'grpc']
+                                        .map(
+                                          (e) => DropdownMenuItem(
+                                            value: e,
+                                            child: Text(e.toUpperCase(), style: const TextStyle(fontSize: 13, letterSpacing: 1)),
+                                          ),
+                                        )
+                                        .toList(),
+                                    onChanged: (v) => setState(() => _network = v!),
+                                    decoration: const InputDecoration(
+                                      contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 24),
+                            Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'TRANSPORT',
+                                  'TLS',
                                   style: TextStyle(
                                     fontSize: 10,
                                     letterSpacing: 1,
@@ -214,47 +331,18 @@ class _AddServerScreenState extends State<AddServerScreen> {
                                     color: Colors.white.withValues(alpha: 0.3),
                                   ),
                                 ),
-                                const SizedBox(height: 8),
-                                DropdownButtonFormField<String>(
-                                  initialValue: _network,
-                                  items: ['tcp', 'ws', 'grpc']
-                                      .map(
-                                        (e) => DropdownMenuItem(
-                                          value: e,
-                                          child: Text(e.toUpperCase(), style: const TextStyle(fontSize: 13, letterSpacing: 1)),
-                                        ),
-                                      )
-                                      .toList(),
-                                  onChanged: (v) => setState(() => _network = v!),
-                                  decoration: const InputDecoration(contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12)),
+                                const SizedBox(height: 4),
+                                Switch(
+                                  value: _tls,
+                                  onChanged: (v) => setState(() => _tls = v),
+                                  activeTrackColor: Colors.white12,
+                                  activeThumbColor: Colors.white,
                                 ),
                               ],
                             ),
-                          ),
-                          const SizedBox(width: 24),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'TLS',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  letterSpacing: 1,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.white.withValues(alpha: 0.3),
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Switch(
-                                value: _tls,
-                                onChanged: (v) => setState(() => _tls = v),
-                                activeTrackColor: Colors.white12,
-                                activeThumbColor: Colors.white,
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
+                          ],
+                        ),
+                      ],
                       const SizedBox(height: 48),
                       SizedBox(
                         width: double.infinity,
