@@ -690,11 +690,20 @@ class V2RayService {
 
     // IMPORTANT: Use the resolved IP in the outbound settings to avoid redundant lookups
     // and potential circular routing issues within the tunnel.
+    // Covers both connection shapes used by V2Ray outbounds:
+    //   - vmess/vless: settings.vnext[0].address
+    //   - trojan/shadowsocks: settings.servers[0].address
     if (fullConfig['outbounds'] != null && fullConfig['outbounds'].isNotEmpty) {
       for (var outbound in fullConfig['outbounds']) {
-        if (outbound['tag'] == 'proxy' && outbound['settings'] != null && outbound['settings']['vnext'] != null) {
-          outbound['settings']['vnext'][0]['address'] = resolvedIp;
-          _logger.info('Updated outbound address to resolved IP: $resolvedIp');
+        if (outbound['tag'] == 'proxy' && outbound['settings'] != null) {
+          final settings = outbound['settings'];
+          if (settings['vnext'] != null && (settings['vnext'] as List).isNotEmpty) {
+            settings['vnext'][0]['address'] = resolvedIp;
+            _logger.info('Updated outbound address to resolved IP: $resolvedIp');
+          } else if (settings['servers'] != null && (settings['servers'] as List).isNotEmpty) {
+            settings['servers'][0]['address'] = resolvedIp;
+            _logger.info('Updated outbound address to resolved IP: $resolvedIp');
+          }
         }
       }
     }
